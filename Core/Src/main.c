@@ -3,6 +3,14 @@
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 
+void ADC_Init(void);
+void ADC_Enable(void);
+void ADC_Start(void);
+void DMA_Init(void);
+void DMA_Config(uint32_t srcAdd, uint32_t destAdd, uint16_t size);
+
+uint16_t RxData[2];
+
 int main(void)
 {
  HAL_Init();
@@ -12,10 +20,127 @@ int main(void)
 
   MX_GPIO_Init();
 
+  ADC_Init();
+  ADC_Enable();
+  DMA_Init();
+
+  DMA_Config((uint32_t) &ADC1->DR, (uint32_t) RxData, 2);
+
+  ADC_Start();
+
   while (1)
   {
 
   }
+}
+
+void ADC_Init(void)
+{
+	/************** STEPS TO FOLLOW *****************
+		1. Enable ADC and GPIO clock
+		2. Set the prescaler in the Common Control Register (CCR)
+		3. Set the Scan Mode and Resolution in the Control Register 1 (CR1)
+		4. Set the Continuous Conversion, EOC, and Data Alignment in Control Reg 2 (CR2)
+		5. Set the Sampling Time for the channels in ADC_SMPRx
+		6. Set the Regular channel sequence length in ADC_SQR1
+		7. Set the Respective GPIO PINs in the Analog Mode
+	************************************************/
+	// 1. Enable ADC and GPIO clock
+	RCC->APB2ENR |= (1 << 8); // ADC1 clock enable
+	RCC->AHB1ENR |= (1 << 0); // GPIO port A clock enable
+
+	// 2. Set the prescaler in the Common Control Register (CCR)
+	ADC->CCR |=  (2 << 16); // PCLK2 divided by 6 (DC_CLK = 90/6 = 15MHz)
+
+	// 3. Set the Scan Mode and Resolution in the Control Register 1 (CR1)
+	ADC1->CR1 |= (1 << 8); // Scan mode enabled
+	ADC1->CR1 &= ~(1 << 24); // 12-bit Resolution
+
+	// 4. Set the Continuous Conversion, EOC, and Data Alignment in Control Reg 2 (CR2)
+	ADC1->CR2 |= (1 << 1); // Enable continuous conversion mode
+	ADC1->CR2 |= (1 << 10); // The EOC bit is set at the end of each regular conversion. Overrun detection is enabled.
+	ADC1->CR2 &= ~(1 << 11); // Data RIGHT alignment
+	// DMA mode enabled
+	ADC1->CR2 |= (1 << 8);
+	// DMA requests are issued as long as data are converted and DMA=1 (Enable Continuous Request)
+	ADC1->CR2 |= (1 << 9);
+
+	// 5. Set the Sampling Time for the channels in ADC_SMPRx
+	ADC1->SMPR2 &= ~((1 << 3) | (1 << 12)); // Sampling time of 3 cycles for channel 1 and channel 4
+
+	// 6. Set the Regular channel sequence length in ADC_SQR1
+	ADC1->SQR1 |= (1 << 20); // SQR1_L =2 for 2 conversions
+
+	// Channel Sequence
+	ADC1->SQR3 |= (1 << 0);  // SEQ1 for Channel 1
+	ADC1->SQR3 |= (4 << 5);  // SEQ2 for Channel 4
+
+	// 7. Set the Respective GPIO PINs in the Analog Mode
+	GPIOA->MODER |= (3 << 2); // analog mode for PA 1
+	GPIOA->MODER |= (3 << 8); // analog mode for PA 4
+}
+
+void ADC_Enable(void)
+{
+	/************** STEPS TO FOLLOW *****************
+		1. Enable the ADC by setting ADON bit in CR2
+		2. Wait for ADC to stabilize (approx 10us)
+	************************************************/
+	ADC1->CR2 |= (1 << 0); // ADON =1 enable ADC1
+
+	uint32_t delay = 10000;
+	while (delay--);
+}
+
+void ADC_Start(void)
+{
+	/************** STEPS TO FOLLOW *****************
+		1. Clear the Status register
+		2. Start the Conversion by Setting the SWSTART bit in CR2
+	************************************************/
+	ADC1->SR = 0; // clear the status register
+	ADC1->CR2 |= (1 << 30); // Starts conversion of regular channels
+}
+
+void DMA_Init(void)
+{
+	/************** STEPS TO FOLLOW *****************
+		1. Enable DMA clock
+		2. Set the DATA Direction
+		3. Enable/Disable the Circular Mode
+		4. Enable/Disable the Memory Increment and Peripheral Increment
+		5. Set the Data Size
+		6. Select the channel for the Stream
+	************************************************/
+	// 1. Enable DMA clock
+	RCC->AHB1ENR |= (1 << 22); //DMA2EN = 1
+	// 2. Set the DATA Direction
+	DMA2_Stream0->CR &= ~(1 << 6); // Peripheral to memory
+	// 3. Enable/Disable the Circular Mode
+	DMA2_Stream0->CR |= (1 << 8); // Circular mode enabled
+	// 4. Enable/Disable the Memory Increment and Peripheral Increment
+	DMA2_Stream0->CR |= (1 << 10); // Memory address pointer is incremented after each data transfer (Enable Memory Address Increment)
+	// 5. Set the Data Size
+	DMA2_Stream0->CR |= (1 << 13); // Memory data size half-word (16-bit)
+	DMA2_Stream0->CR |= (1 << 11); // Peripheral data size half-word (16-bit)
+	// 6. Select the channel for the Stream
+	DMA2_Stream0->CR &= ~(0 << 25); // channel 0 selected
+}
+
+void DMA_Config(uint32_t srcAdd, uint32_t destAdd, uint16_t size)
+{
+	/************** STEPS TO FOLLOW *****************
+	1. Set the Data Size in the NDTR Register
+	2. Set the Peripheral Address and the Memory Address
+	3. Enable the DMA Stream
+	************************************************/
+	// 1. Set the Data Size in the NDTR Register
+	DMA2_Stream0->NDTR = size; // Set the size of the transfer
+	// 2. Set the Peripheral Address and the Memory Address
+	DMA2_Stream0->PAR = srcAdd; // Source address is peripheral address
+	DMA2_Stream0->M0AR = destAdd; // Destination Address is memory address
+	// 3. Enable the DMA Stream
+	DMA2_Stream0->CR |= (1 << 0); // Enable the DMA Stream
 }
 
 /**
